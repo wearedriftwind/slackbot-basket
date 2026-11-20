@@ -1,0 +1,13 @@
+# Alternativ till Railway: kör på valfri Docker-värd med `docker compose up -d`.
+services:
+  biljettbot:
+    build: .
+    env_file: .env
+    environment:
+      DATABAS_SOKVAG: /data/biljetter.db
+    volumes:
+      - biljettdata:/data
+    restart: unless-stopped
+
+volumes:
+  biljettdata:
