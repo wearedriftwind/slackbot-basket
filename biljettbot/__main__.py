@@ -7,10 +7,11 @@ from datetime import datetime
 
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from . import csvio
+from . import csvio, jobb
 from .config import Config
 from .db import Database
 from .kommandon import Kommandon
+from .paminnelser import Paminnare
 from .service import BiljettService
 from .slack_app import skapa_app
 
@@ -34,6 +35,12 @@ def main() -> int:
     svc = BiljettService(db, cfg)
     kmd = Kommandon(svc, cfg)
     app = skapa_app(cfg, svc, kmd)
+
+    def posta(text: str, blocks: list) -> None:
+        app.client.chat_postMessage(channel=cfg.kanal, text=text, blocks=blocks, unfurl_links=False)
+
+    paminnare = Paminnare(svc, posta)
+    jobb.starta(svc, paminnare)
     log.info("Startar biljettboten (Socket Mode), databas %s", cfg.databas)
     SocketModeHandler(app, cfg.slack_app_token).start()
     return 0
