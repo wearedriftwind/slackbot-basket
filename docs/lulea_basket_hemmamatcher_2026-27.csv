@@ -1,0 +1,12 @@
+﻿match_id,datum,veckodag,tid,motstandare,arena,anmarkning,status,biljett1_bokad_av,biljett1_typ,biljett1_kund,biljett1_besokt,biljett1_besokare,biljett2_bokad_av,biljett2_typ,biljett2_kund,biljett2_besokt,biljett2_besokare,paminnelse_skickad,senast_uppdaterad
+M01,2026-10-03,lördag,18:00,Visby Ladies,Luleå Energi Arena,Premiär,spelad,,,,,,,,,,,,
+M02,2026-10-11,söndag,15:00,Brahe Basket,Luleå Energi Arena,,spelad,,,,,,,,,,,,
+M03,2026-10-18,söndag,15:00,Södertälje BBK,Luleå Energi Arena,,spelad,,,,,,,,,,,,
+M04,2026-10-30,fredag,19:00,Högsbo Basket,Luleå Energi Arena,,spelad,,,,,,,,,,,,
+M05,2026-11-27,fredag,19:00,Alvik Basket,Luleå Energi Arena,,kommande,,,,,,,,,,,,
+M06,2026-12-18,fredag,19:00,Östersund Basket,Luleå Energi Arena,,kommande,,,,,,,,,,,,
+M07,2027-01-24,söndag,15:00,IK Eos Lund,Luleå Energi Arena,Kidzday,kommande,,,,,,,,,,,,
+M08,2027-02-06,lördag,18:00,AIK Basket,Luleå Energi Arena,,kommande,,,,,,,,,,,,
+M09,2027-02-20,lördag,18:00,Norrköping Dolphins,Luleå Energi Arena,,kommande,,,,,,,,,,,,
+M10,2027-03-05,fredag,19:00,Onsala Pirates,Luleå Energi Arena,,kommande,,,,,,,,,,,,
+M11,2027-03-12,fredag,18:00,Uppsala Basket,Luleå Energi Arena,Invest in women,kommande,,,,,,,,,,,,
