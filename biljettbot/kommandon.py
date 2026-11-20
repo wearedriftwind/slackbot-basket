@@ -73,7 +73,10 @@ class Kommandon:
                 return self.admin(anv, rest)
             if typ == "export":
                 return self.export(anv, rest)
-            a = nlp.tolka(rest, tvingad_typ=typ)
+            if typ == "besok":
+                a = self._tolka_slash_besok(rest)
+            else:
+                a = nlp.tolka(rest, tvingad_typ=typ)
             return self._utfor_avsikt(anv, a, bekrafta=False)
         except Fel as e:
             return fel(e.meddelande)
@@ -355,16 +358,173 @@ class Kommandon:
         except Fel as e:
             return {"match": e.meddelande[:150]}, None
 
-    # ---- besök och statistik (steg 5) ----------------------------------------------
+    # ---- besök och statistik -----------------------------------------------------
+
+    @staticmethod
+    def _tolka_slash_besok(rest: str) -> Avsikt:
+        """`besök <match> [biljett] 1|2 ja|nej [besökare...]`"""
+        ord_ = rest.split()
+        idx = next((i for i, o in enumerate(ord_) if vik(o) in ("ja", "nej")), None)
+        fore = " ".join(ord_[:idx] if idx is not None else ord_)
+        a = nlp.tolka(fore, tvingad_typ="besok")
+        a.besokt = None
+        a.besokare = None
+        a.for_anvandare = None
+        if idx is not None:
+            a.besokt = vik(ord_[idx])
+            a.besokare = " ".join(ord_[idx + 1:]).strip() or None
+        if a.nr is None:
+            siffra = [o for o in fore.split() if o in ("1", "2")]
+            if siffra:
+                a.nr = int(siffra[0])
+        return a
 
     def _besok(self, anv: str, a: Avsikt, bekrafta: bool) -> Svar:
-        return fel("Besöksregistrering är inte aktiverad än.")
+        if a.ref.tom:
+            return self._besok_lista()
+        m = self._hitta(a, foredra="spelad")
+        if a.besokt is None:
+            if bekrafta:
+                return fel("Gick någon? Skriv t.ex. _jag gick på Visby-matchen_ eller "
+                           "_biljett 2 till Brahe användes inte_.")
+            return Svar("Öppnar formuläret…", modal=self.besok_modal(m.match_id))
+        if a.nr:
+            nrs = [a.nr]
+        elif a.alla:
+            nrs = [1, 2]
+        else:
+            vem = a.for_anvandare or anv
+            egna = [b.nr for b in m.biljetter if b.bokad_av == vem]
+            ofyllda = [b.nr for b in m.biljetter if not b.besokt]
+            if egna:
+                nrs = egna
+            elif a.besokt == "ja" and ofyllda:
+                nrs = ofyllda[:1]
+            else:
+                return fel(f"Ange vilken biljett det gäller (1 eller 2) för {m.motstandare}, "
+                           f"t.ex. `/biljetter besök {m.match_id} 1 ja Anna`.")
+        besokare = a.besokare
+        if a.besokt == "ja" and not besokare and bekrafta:
+            besokare = f"<@{anv}>"  # "jag gick på ..."
+        payload = {"h": "besok", "m": m.match_id, "nrs": nrs, "b": a.besokt, "bes": besokare, "a": anv}
+        if bekrafta:
+            vad = f"besökt av {besokare}" if a.besokt == "ja" else "användes inte"
+            fraga = (f"Registrera biljett {' och '.join(map(str, nrs))} till *{m.motstandare}* "
+                     f"({fmt.tid_text(m)}) – {vad}?")
+            return self._bekraftelse(fraga, payload)
+        return self._gor_besok(anv, payload)
 
     def _gor_besok(self, anv: str, payload: dict) -> Svar:
-        return fel("Besöksregistrering är inte aktiverad än.")
+        m = None
+        for nr in payload["nrs"]:
+            m = self.svc.registrera_besok(payload["m"], nr, anv, payload["b"], besokare=payload.get("bes"))
+        rader = "\n".join(fmt.biljett_text(m.biljett(nr), m) for nr in payload["nrs"])
+        text = f"📝 Registrerat för {m.motstandare} ({fmt.tid_text(m)}):\n{rader}"
+        return Svar(text, [fmt.sektion(text)])
+
+    def _besok_lista(self) -> Svar:
+        spelade = self.svc.spelade()
+        if not spelade:
+            return Svar("Inga matcher är spelade än.")
+        blocks = [fmt.sektion("*Spelade matcher* – välj en match för att registrera vem som gick:")]
+        for m in spelade:
+            saknas = sum(1 for b in m.biljetter if not b.besokt)
+            info = "✅ ifyllt" if not saknas else f"⚠️ {saknas} biljett{'er' if saknas == 2 else ''} saknar uppgift"
+            blocks.append(fmt.sektion(f"`{m.match_id}` {fmt.tid_text(m)} – {m.motstandare} · {info}",
+                                      fmt.knapp("Registrera", "besok_modal", m.match_id)))
+        return Svar("Spelade matcher – registrera besök", blocks[:50])
+
+    def besok_modal(self, mid: str) -> dict:
+        m = self.svc.match(mid)
+
+        def opt(v: str, t: str) -> dict:
+            return {"text": {"type": "plain_text", "text": t}, "value": v}
+
+        ja, nej = "Ja, biljetten användes", "Nej, användes inte"
+        blocks: list[dict] = [fmt.sektion(f"*{m.motstandare}* · {fmt.tid_text(m)}\n"
+                                          "Fyll i vem som bokade och vem som faktiskt gick. "
+                                          "Välj _Nej_ om biljetten inte användes.")]
+        for b in m.biljetter:
+            bokad = {"type": "users_select", "action_id": "v",
+                     "placeholder": {"type": "plain_text", "text": "Vem bokade?"}}
+            if b.bokad_av:
+                bokad["initial_user"] = b.bokad_av
+            typ = {"type": "static_select", "action_id": "v",
+                   "placeholder": {"type": "plain_text", "text": "Privat/kund"},
+                   "options": [opt("privat", "Privat"), opt("kund", "Kund")]}
+            if b.typ:
+                typ["initial_option"] = opt(b.typ, b.typ.capitalize())
+            kund = {"type": "plain_text_input", "action_id": "v"}
+            if b.kund:
+                kund["initial_value"] = b.kund
+            besokt = {"type": "radio_buttons", "action_id": "v", "options": [opt("ja", ja), opt("nej", nej)]}
+            if b.besokt:
+                besokt["initial_option"] = opt(b.besokt, ja if b.besokt == "ja" else nej)
+            besokare = {"type": "plain_text_input", "action_id": "v",
+                        "placeholder": {"type": "plain_text", "text": "Namn – kan vara en gäst"}}
+            if b.besokare:
+                besokare["initial_value"] = b.besokare
+            n = b.nr
+            blocks += [
+                {"type": "header", "text": {"type": "plain_text", "text": f"Biljett {n}"}},
+                {"type": "input", "block_id": f"bokad_av{n}", "optional": True,
+                 "label": {"type": "plain_text", "text": "Bokad av"}, "element": bokad},
+                {"type": "input", "block_id": f"typ{n}", "optional": True,
+                 "label": {"type": "plain_text", "text": "Typ"}, "element": typ},
+                {"type": "input", "block_id": f"kund{n}", "optional": True,
+                 "label": {"type": "plain_text", "text": "Kund (om kund)"}, "element": kund},
+                {"type": "input", "block_id": f"besokt{n}", "optional": True,
+                 "label": {"type": "plain_text", "text": "Användes biljetten?"}, "element": besokt},
+                {"type": "input", "block_id": f"besokare{n}", "optional": True,
+                 "label": {"type": "plain_text", "text": "Vem gick?"}, "element": besokare},
+            ]
+        return {"type": "modal", "callback_id": "besok_vy", "private_metadata": json.dumps({"m": m.match_id}),
+                "title": {"type": "plain_text", "text": "Registrera besök"},
+                "submit": {"type": "plain_text", "text": "Spara"},
+                "close": {"type": "plain_text", "text": "Avbryt"}, "blocks": blocks}
+
+    def besok_fran_modal(self, anv: str, mid: str, values: dict) -> tuple[dict | None, Svar | None]:
+        def v(block: str):
+            el = values.get(block, {}).get("v", {})
+            if "selected_option" in el:
+                return (el["selected_option"] or {}).get("value")
+            if "selected_user" in el:
+                return el["selected_user"]
+            return (el.get("value") or "").strip() or None
+
+        m = self.svc.match(mid)
+        fel_: dict[str, str] = {}
+        andringar = []
+        for b in m.biljetter:
+            n = b.nr
+            besokt, bokad_av, typ, kund, besokare = (v(f"besokt{n}"), v(f"bokad_av{n}"), v(f"typ{n}"),
+                                                     v(f"kund{n}"), v(f"besokare{n}"))
+            if not besokt:
+                if (bokad_av, typ, kund, besokare) != (b.bokad_av, b.typ, b.kund, b.besokare) and \
+                        any((bokad_av, typ, kund, besokare)):
+                    fel_[f"besokt{n}"] = "Ange om biljetten användes."
+                continue
+            if typ == "kund" and not kund:
+                fel_[f"kund{n}"] = "Ange kundnamn."
+                continue
+            andringar.append((n, besokt, besokare, bokad_av, typ, kund))
+        if fel_:
+            return fel_, None
+        try:
+            for n, besokt, besokare, bokad_av, typ, kund in andringar:
+                m = self.svc.registrera_besok(mid, n, anv, besokt, besokare=besokare, bokad_av=bokad_av,
+                                              typ=typ, kund=kund)
+        except Fel as e:
+            return {"besokt1": e.meddelande[:150]}, None
+        rader = "\n".join(fmt.biljett_text(b, m) for b in m.biljetter)
+        text = f"📝 Besök registrerat för {m.motstandare} ({fmt.tid_text(m)}):\n{rader}"
+        return None, Svar(text, [fmt.sektion(text)])
 
     def _statistik(self, anv: str, a: Avsikt) -> Svar:
-        return fel("Statistik är inte aktiverad än.")
+        from .statistik import berakna, format_statistik
+        text = format_statistik(berakna(self.svc.matcher()))
+        return Svar(text, [{"type": "header", "text": {"type": "plain_text", "text": "Biljettstatistik"}},
+                           *[fmt.sektion(d) for d in text.split("\n\n")]])
 
     # ---- admin --------------------------------------------------------------------
 

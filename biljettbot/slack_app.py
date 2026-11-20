@@ -206,6 +206,19 @@ def skapa_app(cfg: Config, svc: BiljettService, kmd: Kommandon, verifiera_token:
             return
         client.views_open(trigger_id=body["trigger_id"], view=vy)
 
+    @app.action("besok_modal")
+    def a_besok_modal(ack, body, action, respond, client):
+        ack()
+        anv = body["user"]["id"]
+        if not behorighet.far_anvanda(anv):
+            respond(text=NEKAD, response_type="ephemeral", replace_original=False)
+            return
+        vy = kmd.besok_modal(action["value"])
+        meta = json.loads(vy["private_metadata"])
+        meta["kanal"] = (body.get("channel") or {}).get("id")
+        vy["private_metadata"] = json.dumps(meta)
+        client.views_open(trigger_id=body["trigger_id"], view=vy)
+
     @app.action("bekrafta")
     def a_bekrafta(ack, body, action, respond, client):
         ack()
@@ -233,17 +246,35 @@ def skapa_app(cfg: Config, svc: BiljettService, kmd: Kommandon, verifiera_token:
         ack()
         meta = json.loads(view.get("private_metadata") or "{}")
         kanal = meta.get("kanal")
+        if svar.offentlig and kanal:
+            client.chat_postMessage(channel=kanal, text=svar.text, blocks=svar.blocks)
+        else:
+            privat_svar(client, anv, kanal, svar)
+        leverans.notiser(svar.notiser)
+
+    @app.view("besok_vy")
+    def v_besok(ack, body, view, client):
+        anv = body["user"]["id"]
+        meta = json.loads(view.get("private_metadata") or "{}")
+        if not behorighet.far_anvanda(anv):
+            ack(response_action="errors", errors={"besokt1": NEKAD[:150]})
+            return
+        fel_, svar = kmd.besok_fran_modal(anv, meta["m"], view["state"]["values"])
+        if fel_:
+            ack(response_action="errors", errors=fel_)
+            return
+        ack()
+        privat_svar(client, anv, meta.get("kanal"), svar)
+
+    def privat_svar(client: WebClient, anv: str, kanal: str | None, svar: Svar) -> None:
+        """Svar efter en modal: ephemeral i kanalen den öppnades från, annars DM."""
         try:
-            if kanal:
-                client.chat_postEphemeral(channel=kanal, user=anv, text=svar.text, blocks=svar.blocks)
-            else:
+            if not kanal:
                 raise SlackApiError("ingen kanal", None)
+            client.chat_postEphemeral(channel=kanal, user=anv, text=svar.text, blocks=svar.blocks)
         except SlackApiError:
             dm = client.conversations_open(users=anv)["channel"]["id"]
             client.chat_postMessage(channel=dm, text=svar.text, blocks=svar.blocks)
-        if svar.offentlig and kanal:
-            client.chat_postMessage(channel=kanal, text=svar.text, blocks=svar.blocks)
-        leverans.notiser(svar.notiser)
 
     @app.error
     def fel_hanterare(error, body, logger):

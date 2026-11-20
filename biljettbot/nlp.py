@@ -139,6 +139,11 @@ def tolka(text: str, bot_id: str | None = None, tvingad_typ: str | None = None) 
     original = text
     if bot_id:
         original = re.sub(rf"<@{bot_id}(?:\|[^>]*)?>", " ", original)
+    besokare = None
+    mb = re.search(r"\bbesökare\s*[:=]\s*(.+)$", original, re.I)
+    if mb:
+        besokare = mb[1].strip().strip("\"'”“")
+        original = original[:mb.start()]
     kund, utan_kund = _plocka_kund(original)
     mentions = MENTION.findall(utan_kund)
     utan_mentions = MENTION.sub(" ", utan_kund)
@@ -165,12 +170,13 @@ def tolka(text: str, bot_id: str | None = None, tvingad_typ: str | None = None) 
     elif re.search(r"\b(en|1|ena)\s*(biljett|st)\b", v):
         a.antal = 1
 
-    # besök: ja/nej
+    # besök: ja/nej, och vem som gick
     if a.typ == "besok":
         if re.search(r"\b(nej|inte|ingen|oanvand)", v):
             a.besokt = "nej"
-        else:
+        elif tvingad_typ is None or re.search(r"\bja\b", v):
             a.besokt = "ja"
+        a.besokare = besokare or (f"<@{mentions[0]}>" if mentions else None)
 
     a.ref = _matchref(v)
     return a

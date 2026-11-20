@@ -106,6 +106,8 @@ def status(m: Match) -> tuple[str, list[dict]]:
                     knapp("Boka för kund / åt någon…", "boka_modal", m.match_id)]
     if m.bokade and m.status in ("kommande", "flyttad"):
         knappar.append(knapp("Avboka min biljett", "avboka_min", m.match_id))
+    if m.status == "spelad":
+        knappar.append(knapp("📝 Registrera besök", "besok_modal", m.match_id))
     if knappar:
         blocks.append(handlingar(f"status:{m.match_id}", *knappar))
     blocks.append(kontext(f"`{m.match_id}`"))
