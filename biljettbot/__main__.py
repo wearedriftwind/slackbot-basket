@@ -7,13 +7,14 @@ from datetime import datetime
 
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from . import csvio, jobb
+from . import csvio, jobb, kalla
 from .config import Config
 from .db import Database
 from .kommandon import Kommandon
 from .paminnelser import Paminnare
 from .service import BiljettService
 from .slack_app import skapa_app
+from .synk import Synkare, synk_kommando
 
 log = logging.getLogger("biljettbot")
 
@@ -33,14 +34,20 @@ def main() -> int:
         log.info("Importerade %d matcher från %s", n, cfg.csv_import)
 
     svc = BiljettService(db, cfg)
-    kmd = Kommandon(svc, cfg)
+    synkare = Synkare(svc, kalla.hamta)
+    kmd = Kommandon(svc, cfg, synka=lambda anv, tvinga: synk_kommando(svc, synkare, anv, tvinga))
     app = skapa_app(cfg, svc, kmd)
 
     def posta(text: str, blocks: list) -> None:
         app.client.chat_postMessage(channel=cfg.kanal, text=text, blocks=blocks, unfurl_links=False)
 
+    def schemalagd_synk() -> None:
+        resultat = synkare.kor()
+        log.info("Schemalagd synk: %s – %s", resultat.utfall, resultat.text)
+        app.leverans.notiser(resultat.notiser)
+
     paminnare = Paminnare(svc, posta)
-    jobb.starta(svc, paminnare)
+    jobb.starta(svc, paminnare, synk=schemalagd_synk)
     log.info("Startar biljettboten (Socket Mode), databas %s", cfg.databas)
     SocketModeHandler(app, cfg.slack_app_token).start()
     return 0
