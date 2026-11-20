@@ -120,6 +120,8 @@ def skapa_app(cfg: Config, svc: BiljettService, kmd: Kommandon, verifiera_token:
         respond(text=svar.text, blocks=svar.blocks, response_type="ephemeral",
                 replace_original=ersatt)
         leverans.notiser(svar.notiser)
+        if svar.fil:
+            leverans.fil(body["user"]["id"], svar.fil)
 
     # ---- slash-kommando -----------------------------------------------------
 

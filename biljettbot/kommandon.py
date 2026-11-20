@@ -267,6 +267,8 @@ class Kommandon:
                 return self._gor_avbokning(anv, payload["m"], a)
             if h == "besok":
                 return self._gor_besok(anv, payload)
+            if h == "aterstall":
+                return self._gor_aterstallning(anv)
         except Fel as e:
             return fel(e.meddelande)
         return fel("Okänd åtgärd.")
@@ -536,6 +538,26 @@ class Kommandon:
         namn = f"lulea_basket_hemmamatcher_{self.svc.nu():%Y%m%d_%H%M}.csv"
         return Svar(f"📄 Export klar: {namn}", fil=(namn, data))
 
+    def _gor_aterstallning(self, anv: str) -> Svar:
+        if not self.svc.ar_admin(anv):
+            return fel("Återställning får bara göras av administratörer.")
+        from pathlib import Path
+        from . import csvio
+        kalla = Path(self.cfg.csv_import)
+        if not kalla.exists():
+            return fel(f"Hittar inte startunderlaget `{kalla}` – inget har ändrats.")
+        nu = self.svc.nu()
+        backup = csvio.exportera(self.svc.db, utokad=True)
+        try:
+            n = csvio.aterstall(self.svc.db, kalla.read_text(encoding="utf-8-sig"), nu, self.cfg.arena, anv)
+        except csvio.ImportFel as e:
+            return fel(f"Startunderlaget är ogiltigt, inget har ändrats: {e}")
+        self.svc.uppdatera_spelade()
+        text = f"🔄 Återställt: {n} matcher importerade från startunderlaget. Backup av tidigare läge skickas i DM."
+        return Svar(text, [fmt.sektion(text)],
+                    notiser=[Notis(f"🔄 <@{anv}> återställde schema och bokningar till startunderlaget.")],
+                    fil=(f"backup_fore_aterstallning_{nu:%Y%m%d_%H%M}.csv", backup))
+
     def admin(self, anv: str, rest: str) -> Svar:
         if not self.svc.ar_admin(anv):
             return fel("Adminkommandon får bara användas av administratörer (se ADMINS i konfigurationen).")
@@ -575,6 +597,11 @@ class Kommandon:
             m = self.svc.radera_match(args[0], anv, tvinga="tvinga" in args[1:])
             return self._med_notis(f"🗑️ Raderade {m.match_id}.",
                                    f"🗑️ <@{anv}> raderade {m.match_id} {m.motstandare} {m.datum}.")
+        if kmd == "aterstall":
+            fraga = ("*Återställa schema och bokningar till startunderlaget?*\n"
+                     f"Alla bokningar, besök, påminnelser, synkhistorik och audit-loggen raderas, och "
+                     f"`{self.cfg.csv_import}` importeras på nytt. Du får en export av nuläget som backup i DM.")
+            return self._bekraftelse(fraga, {"h": "aterstall", "a": anv})
         if kmd == "logg":
             n = int(args[0]) if args and args[0].isdigit() else 15
             rader = [f"`{r['tid'][:16]}` <@{r['aktor']}> {r['handling']} {r['match_id'] or ''} {r['detaljer'] or ''}"
@@ -596,6 +623,7 @@ ADMIN_HJALP = (
     "• `/biljetter admin ny 2027-03-20 18:00 Alvik Basket serie=slutspel`\n"
     "• `/biljetter admin radera M12 [tvinga]`\n"
     "• `/biljetter admin logg [antal]` – senaste händelserna i audit-loggen\n"
+    "• `/biljetter admin återställ` – radera allt och importera startunderlaget på nytt (efter test)\n"
     "• `/biljetter admin synka tvinga` – synka även om valideringen varnar\n"
     "• `/biljetter export [utökad]` – CSV i startunderlagets format"
 )

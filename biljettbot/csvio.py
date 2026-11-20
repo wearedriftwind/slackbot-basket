@@ -86,34 +86,52 @@ def importera(db: Database, text: str, nu: datetime, arena_standard: str) -> int
     with db.transaktion() as c:
         if c.execute("SELECT COUNT(*) FROM matches").fetchone()[0]:
             raise ImportFel("Databasen innehåller redan matcher – import avbruten")
-        for rad in rader:
-            mid = rad["match_id"].strip()
-            db.skapa_match(c, Match(
-                match_id=mid,
-                datum=rad["datum"].strip(),
-                tid=_tom(rad["tid"]),
-                motstandare=rad["motstandare"].strip(),
-                arena=_tom(rad["arena"]) or arena_standard,
-                anmarkning=(rad["anmarkning"] or "").strip(),
-                status=rad["status"].strip(),
-                serie=_tom(rad.get("serie")) or "grundserie",
-                kalla_id=_tom(rad.get("kalla_id")),
-                senast_uppdaterad=_tom(rad["senast_uppdaterad"]),
-            ))
-            for n in (1, 2):
-                c.execute(
-                    "UPDATE tickets SET bokad_av=?, typ=?, kund=?, besokt=?, besokare=? "
-                    "WHERE match_id=? AND nr=?",
-                    (_tom(rad[f"biljett{n}_bokad_av"]), _tom(rad[f"biljett{n}_typ"]),
-                     _tom(rad[f"biljett{n}_kund"]), _tom(rad[f"biljett{n}_besokt"]),
-                     _tom(rad[f"biljett{n}_besokare"]), mid, n),
-                )
-            if _tom(rad["paminnelse_skickad"]):
-                c.execute("INSERT INTO reminders_sent (match_id, typ, tidpunkt, status) "
-                          "VALUES (?, 'import', ?, 'import')", (mid, rad["paminnelse_skickad"].strip()))
+        _skriv_rader(db, c, rader, nu, arena_standard)
         db.logga(c, nu, "import", "csv_import", antal=len(rader))
-        db.satt_meta(c, "csv_importerad", tid.iso(nu))
     return len(rader)
+
+
+def aterstall(db: Database, text: str, nu: datetime, arena_standard: str, aktor: str) -> int:
+    """Raderar ALLT (matcher, bokningar, besök, påminnelser, synkhistorik, audit-logg) och
+    importerar CSV-filen på nytt – i en transaktion. Filen valideras innan något raderas."""
+    rader = las_csv(text)
+    for i, rad in enumerate(rader, start=2):
+        validera_rad(rad, i)
+    with db.transaktion() as c:
+        for tabell in ("reminders_sent", "tickets", "matches", "sync_runs", "audit_log", "meta"):
+            c.execute(f"DELETE FROM {tabell}")
+        _skriv_rader(db, c, rader, nu, arena_standard)
+        db.logga(c, nu, aktor, "aterstall", antal=len(rader))
+    return len(rader)
+
+
+def _skriv_rader(db: Database, c, rader: list[dict[str, str]], nu: datetime, arena_standard: str) -> None:
+    for rad in rader:
+        mid = rad["match_id"].strip()
+        db.skapa_match(c, Match(
+            match_id=mid,
+            datum=rad["datum"].strip(),
+            tid=_tom(rad["tid"]),
+            motstandare=rad["motstandare"].strip(),
+            arena=_tom(rad["arena"]) or arena_standard,
+            anmarkning=(rad["anmarkning"] or "").strip(),
+            status=rad["status"].strip(),
+            serie=_tom(rad.get("serie")) or "grundserie",
+            kalla_id=_tom(rad.get("kalla_id")),
+            senast_uppdaterad=_tom(rad["senast_uppdaterad"]),
+        ))
+        for n in (1, 2):
+            c.execute(
+                "UPDATE tickets SET bokad_av=?, typ=?, kund=?, besokt=?, besokare=? "
+                "WHERE match_id=? AND nr=?",
+                (_tom(rad[f"biljett{n}_bokad_av"]), _tom(rad[f"biljett{n}_typ"]),
+                 _tom(rad[f"biljett{n}_kund"]), _tom(rad[f"biljett{n}_besokt"]),
+                 _tom(rad[f"biljett{n}_besokare"]), mid, n),
+            )
+        if _tom(rad["paminnelse_skickad"]):
+            c.execute("INSERT INTO reminders_sent (match_id, typ, tidpunkt, status) "
+                      "VALUES (?, 'import', ?, 'import')", (mid, rad["paminnelse_skickad"].strip()))
+    db.satt_meta(c, "csv_importerad", tid.iso(nu))
 
 
 def importera_vid_forsta_start(db: Database, sokvag: str | Path, nu: datetime,

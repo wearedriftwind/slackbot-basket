@@ -41,7 +41,7 @@ Allt sköts i Slack: schema, bokning, påminnelser, besökshistorik, statistik o
 | `/biljetter synka` | Hämta schemat från luleabasket.com nu |
 | `/biljetter hjälp` | Hjälp |
 | `/biljetter export [utökad]` | *Admin:* CSV i startunderlagets format, skickas som DM |
-| `/biljetter admin …` | *Admin:* `ändra`, `ny`, `radera`, `logg`, `synka tvinga` |
+| `/biljetter admin …` | *Admin:* `ändra`, `ny`, `radera`, `logg`, `synka tvinga`, `återställ` |
 
 **Match** kan anges som motståndare (`Alvik`, `östersund`, `norrköpingsmatchen` – stavfel tolereras), datum (`18 dec`, `18/12`, `2026-12-18`), veckodag (`fredag`), `nästa`, `idag`/`imorgon` eller match-id (`M05`).
 
@@ -131,6 +131,19 @@ Boten är en enda långlivad process (Socket Mode + schemaläggare). Den behöve
 **Viktigt:** kör bara **en** instans. Påminnelser är ändå skyddade mot dubbelutskick i databasen, men två processer mot samma SQLite-fil ska undvikas. Railway stoppar den gamla instansen innan den nya startar när en volym är monterad.
 
 **Tålighet vid omstart:** bokningar skrivs transaktionellt direkt i SQLite (WAL). Påminnelser reserveras i databasen innan de skickas och skickas därför aldrig två gånger; missade påminnelser (boten nere kl. 10) skickas när boten startar igen om matchen inte har börjat. `spelad` och synk är idempotenta.
+
+### Testa innan lansering – och återställ
+
+Boka, avboka, registrera besök och kör synk fritt under testperioden (gärna med `BILJETT_KANAL` satt till en testkanal). När ni ska gå live:
+
+1. Kör `/biljetter admin återställ` och tryck **Bekräfta**.
+   - Alla bokningar, besök, påminnelser, synkhistorik och audit-loggen raderas och [startunderlaget](docs/lulea_basket_hemmamatcher_2026-27.csv) importeras på nytt – i en transaktion. Startunderlaget valideras först; är det trasigt ändras ingenting.
+   - Du får en export av läget före återställningen som DM (backup), och kanalen får en kort notis.
+   - `spelad` sätts direkt för matcher som hunnit spelas. Kopplingen till luleabasket.com görs om vid nästa synk.
+2. Byt ev. `BILJETT_KANAL` till den riktiga kanalen och starta om tjänsten.
+3. Kör `/biljetter synka` en gång så att schemat är aktuellt.
+
+Vill du ändra startpunkten (t.ex. lägga in bokningar som redan gjorts utanför Slack) redigerar du CSV-filen och deployar innan du återställer. Från ett skal i containern fungerar även `python -m biljettbot.cli aterstall --ja`.
 
 **Annan värd:** `cp .env.example .env`, fyll i och kör `docker compose up -d` ([`docker-compose.yml`](docker-compose.yml) har en namngiven volym för `/data`).
 
